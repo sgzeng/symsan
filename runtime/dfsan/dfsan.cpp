@@ -90,6 +90,7 @@ static __taint::union_hashtable __union_table(hashtable_buckets);
 
 Flags __dfsan::flags_data;
 bool print_debug;
+const char * distance_fp = NULL;
 
 // The size of TLS variables. These constants must be kept in sync with the ones
 // in Taint.cc
@@ -857,6 +858,7 @@ static void RegisterDfsanFlags(FlagParser *parser, Flags *f) {
 
 static void InitializeTaintFile() {
   struct stat st;
+  distance_fp = flags().distance_file;
   const char *filename = flags().taint_file;
   int err;
   if (internal_strcmp(filename, "stdin") == 0) {

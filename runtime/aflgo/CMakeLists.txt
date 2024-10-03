@@ -1,5 +1,5 @@
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_STANDARD 14)
 
-add_library(AFLGORT STATIC aflgo-rt.o.c)
+add_library(AFLGORT STATIC aflgo-rt.o.cpp)
 install (TARGETS AFLGORT DESTINATION ${SYMSAN_LIB_DIR})

@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <map>
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
@@ -141,6 +142,24 @@ void getFuncDebugLoc(const Function *F, std::string &Filename, unsigned &Line) {
     getInsDebugLoc(I, Filename, Line, col);
 }
 
+uint32_t getBasicblockId(BasicBlock &BB) {
+  static uint32_t unamed = 0;
+  std::string bb_name_with_col("");
+  std::string filename;
+  unsigned line = 0;
+  unsigned col = 0;
+  getBBDebugLoc(&BB, filename, line, col);
+  if (!filename.empty() && line != 0 ){
+    bb_name_with_col = filename + ":" + std::to_string(line) + ":" + std::to_string(col);
+  }else{
+    std::size_t found = filename.find_last_of("/\\");
+    if (found != std::string::npos)
+      filename = filename.substr(found + 1);
+    bb_name_with_col = filename + ":unamed:" + std::to_string(unamed++);
+  }
+  return djbHash(bb_name_with_col);
+}
+
 template<>
 struct DOTGraphTraits<Function*> : public DefaultDOTGraphTraits {
   DOTGraphTraits(bool isSimple=false) : DefaultDOTGraphTraits(isSimple) {}
@@ -230,7 +249,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   }
 
   std::list<std::string> targets;
-  std::map<std::string, int> bb_to_dis;
+  std::map<uint64_t, int> bb_to_dis;
 
   if (!TargetsFile.empty()) {
 
@@ -256,13 +275,17 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       std::string line;
       while (getline(cf, line)) {
-
-        std::size_t pos = line.find(",");
-        std::string bb_name = line.substr(0, pos);
-        int bb_dis = (int) atof(line.substr(pos + 1, line.length()).c_str());
-
-        bb_to_dis[bb_name] = bb_dis;
-
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string token;
+        getline(ss, token, ',');
+        uint64_t BB_id = std::stoull(token);
+        // Read filename:loc (not used here)
+        getline(ss, token, ',');
+        // Read distance
+        getline(ss, token, ',');
+        int bb_dis = (int) atof(token.c_str());
+        bb_to_dis[BB_id] = bb_dis;
       }
       cf.close();
 
@@ -409,6 +432,11 @@ bool AFLCoverage::runOnModule(Module &M) {
     ftargets.close();
     bbtargets.close();
   } else {
+
+#ifndef __x86_64__
+    FATAL("AFLGo distance instrumentation mode is supported only on x86-64 now.");
+    return false;
+#endif
     /* Distance instrumentation */
 
     LLVMContext &C = M.getContext();
@@ -416,113 +444,37 @@ bool AFLCoverage::runOnModule(Module &M) {
     IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
     IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 
-#ifdef __x86_64__
-    IntegerType *LargestType = Int64Ty;
-    ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 8 + 8);
-    ConstantInt *MapDistSumLoc = ConstantInt::get(LargestType, MAP_SIZE + 8);
-#else
-    IntegerType *LargestType = Int32Ty;
-    ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 4 + 4);
-    ConstantInt *MapDistSumLoc = ConstantInt::get(LargestType, MAP_SIZE + 4);
-#endif
-    ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
-    ConstantInt *One = ConstantInt::get(LargestType, 1);
-
-    /* Get globals for the SHM region and the previous location. Note that
-       __afl_prev_loc is thread-local. */
-
-    GlobalVariable *AFLMapPtr =
-        new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
-                           GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
+    // Declare the runtime function 'update_distance'
+    FunctionType *UpdateDistFuncTy = FunctionType::get(Type::getVoidTy(C), {Int64Ty}, false);
+    FunctionCallee UpdateDistFunc = M.getOrInsertFunction("update_distance", UpdateDistFuncTy);
 
     for (auto &F : M) {
 
-      int distance = -1;
+      int distance = -2;
 
       for (auto &BB : F) {
 
         distance = -2;
 
+        uint64_t bb_id = (uint64_t) getBasicblockId(BB);
         if (is_aflgo) {
-
-          std::string bb_name;
-          std::string filename;
-          unsigned int line = 0;
-          unsigned int col = 0;
-          getBBDebugLoc(&BB, filename, line, col);
-          bb_name = filename + ":" + std::to_string(line);
-          if (!bb_name.empty() && bb_to_dis.find(bb_name) != bb_to_dis.end()) {
+          if (bb_to_dis.find(bb_id) != bb_to_dis.end()) {
             /* Find distance for BB */
-            distance = bb_to_dis[bb_name];
+            distance = bb_to_dis[bb_id];
           }
         }
 
         BasicBlock::iterator IP = BB.getFirstInsertionPt();
         IRBuilder<> IRB(&(*IP));
 
-        if (distance >= 0) {
-          LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-          MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-          ConstantInt *Distance = ConstantInt::get(LargestType, (unsigned) distance);
-          ConstantInt *Zero = ConstantInt::get(LargestType, (unsigned) 0);
-
-          /* Store global minimal BB distance to shm[MAPSIZE]
-          *  sub = distance - map_dist
-          *  lshr = sign(sub) 
-          *  shm[MAPSIZE] = lshr * distance + (1 - lshr) * map_dist
-          */
-          Value *MapDistPtr = IRB.CreateBitCast(
-              IRB.CreateGEP(MapPtr, MapDistLoc), LargestType->getPointerTo());
-          LoadInst *MapDist = IRB.CreateLoad(MapDistPtr);
-          MapDist->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-          Value *Sub = IRB.CreateSub(Distance, MapDist);
-          ConstantInt *Bits = ConstantInt::get(LargestType, 63);
-          Value *Lshr = IRB.CreateLShr(Sub, Bits);
-          Value *Mul1 = IRB.CreateMul(Lshr, Distance);
-          Value *Sub1 = IRB.CreateSub(One, Lshr);
-          Value *Mul2 = IRB.CreateMul(Sub1, MapDist);
-          Value *Incr = IRB.CreateAdd(Mul1, Mul2);
-
-          IRB.CreateStore(Incr, MapDistPtr)
-           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-          /* Store local minimal distance to shm[MAPSIZE + (4 or 8)] */
-          Value *MapDistSumPtr = IRB.CreateBitCast(
-              IRB.CreateGEP(MapPtr, MapDistSumLoc), LargestType->getPointerTo());
-          MapDist = IRB.CreateLoad(MapDistSumPtr);
-          MapDist->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-          Sub = IRB.CreateSub(Distance, MapDist);
-          Bits = ConstantInt::get(LargestType, 63);
-          Lshr = IRB.CreateLShr(Sub, Bits);
-          Mul1 = IRB.CreateMul(Lshr, Distance);
-          Sub1 = IRB.CreateSub(One, Lshr);
-          Mul2 = IRB.CreateMul(Sub1, MapDist);
-          Incr = IRB.CreateAdd(Mul1, Mul2);
-
-          IRB.CreateStore(Incr, MapDistSumPtr)
-           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-          /* Increase count at shm[MAPSIZE + (4 or 8) + (4 or 8)] */
-          Value *MapCntPtr = IRB.CreateBitCast(
-              IRB.CreateGEP(MapPtr, MapCntLoc), LargestType->getPointerTo());
-          LoadInst *MapCnt = IRB.CreateLoad(MapCntPtr);
-          MapCnt->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-          Value *IncrCnt = IRB.CreateAdd(MapCnt, One);
-          IRB.CreateStore(IncrCnt, MapCntPtr)
-              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-        }else if (distance == -1){
-          llvm::FunctionCallee exitFunc = M.getOrInsertFunction(
-              "exit", llvm::FunctionType::get(
-                llvm::Type::getVoidTy(M.getContext()), Int32Ty, false));
-          IRB.CreateCall(exitFunc, {IRB.getInt32(0)});
-        }
         if (distance >= 0 || distance == -1) {
+          ConstantInt *BBidConst = ConstantInt::get(Int64Ty, bb_id);
+          BasicBlock::iterator IP = BB.getFirstInsertionPt();
+          IRBuilder<> IRB(&(*IP));
+          IRB.CreateCall(UpdateDistFunc, {BBidConst});
           inst_blocks++;
         }
-
+        
       }
     }
   }
