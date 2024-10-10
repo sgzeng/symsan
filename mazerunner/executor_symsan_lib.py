@@ -96,17 +96,19 @@ class ConcolicExecutor:
         logging_level = 1 if self.logging_level == logging.DEBUG else 0
         shoud_trace_bounds = 1 if self.config.gep_solver_enabled else 0
         cmd, stdin, self.input_content = utils.fix_at_file(self.cmd, self.cur_input)
+        distance_fp = os.path.join(self.config.static_result_folder, "distance.cfg.txt")
         self.logger.debug(f"Executing {' '.join(cmd)}, "
                           f"stdin={stdin}, "
+                          f"distance_fp={distance_fp}, "
                           f"input={self.cur_input}, "
                           f"logging_level={logging_level}, "
                           f"bounds={shoud_trace_bounds}")
         if stdin:
-            symsan.config("stdin", args=cmd, debug=logging_level, bounds=shoud_trace_bounds)
+            symsan.config("stdin", distance_file=distance_fp, args=cmd, debug=logging_level, bounds=shoud_trace_bounds)
             symsan.reset_input([self.input_content])
             symsan.run(stdin=self.cur_input)
         else:
-            symsan.config(self.cur_input, args=cmd, debug=logging_level, bounds=shoud_trace_bounds)
+            symsan.config(self.cur_input, distance_file=distance_fp, args=cmd, debug=logging_level, bounds=shoud_trace_bounds)
             symsan.reset_input([self.input_content])
             symsan.run()
 

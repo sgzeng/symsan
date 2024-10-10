@@ -128,12 +128,12 @@ void update_distance(uint64_t bbid) {
     int distance = get_distance(bbid);
     if (distance >= 0) {
         // Store global minimal BB distance to __afl_area_ptr[MAP_SIZE]
-        u64* map_dist_ptr = reinterpret_cast<u64*>(__afl_area_ptr + MAP_SIZE);
-        *map_dist_ptr = std::min(*map_dist_ptr, static_cast<u64>(distance));
+        u64* global_dist_ptr = reinterpret_cast<u64*>(__afl_area_ptr + MAP_SIZE);
+        *global_dist_ptr = std::min(*global_dist_ptr, static_cast<u64>(distance));
 
-        // Store distance sum to __afl_area_ptr[MAP_SIZE + 8]
-        u64* map_distsum_ptr = reinterpret_cast<u64*>(__afl_area_ptr + MAP_SIZE + 8);
-        *map_distsum_ptr += static_cast<u64>(distance);
+        // Store local minimal BB distance to __afl_area_ptr[MAP_SIZE + 8]
+        u64* local_dist_ptr = reinterpret_cast<u64*>(__afl_area_ptr + MAP_SIZE + 8);
+        *local_dist_ptr = std::min(*local_dist_ptr, static_cast<u64>(distance));
 
         // Increase counter at __afl_area_ptr[MAP_SIZE + 16]
         u64* map_cnt_ptr = reinterpret_cast<u64*>(__afl_area_ptr + MAP_SIZE + 16);
