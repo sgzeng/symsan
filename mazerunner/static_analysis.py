@@ -437,23 +437,17 @@ class CFGraph:
     def save_result(self, output_path):
         def sort_key(item):
             return item[1] if item[1] >= 0 else float('inf')
-
-        distances = collections.defaultdict(list)
-        for node, d in self.dist.items():
-            loc = self.extract_location(node)
-            if loc and d is not None and '_%' not in loc:
-                distances[loc].append(d)
         # nodes can map to the same loc
-        average_d = {key: sum(values) / len(values) for key, values in distances.items()}
-        sorted_distances = dict(sorted(average_d.items(), key=sort_key))
+        sorted_distances = dict(sorted(self.dist.items(), key=sort_key))
         with open(output_path, 'w') as f:
-            for loc, d in sorted_distances.items():
-                if 'unamed' in loc:
-                    continue
+            for node, d in sorted_distances.items():
+                loc = self.extract_location(node)
+                label = self.cfg.nodes[node].get('label', '')
+                bb_id = int(re.search(r"id:(\d+)", label).group(1))
                 if d < 0 and (d != -1 or not self.unreachable_nodes):
                     continue
                 d = d * 1000 if d > 0 else d
-                f.write(f"{loc},{d}\n")
+                f.write(f"{bb_id},{loc},{d}\n")
 
     def print_result(self, res):
         sorted_distances = dict(sorted(res.items(), key=lambda item: item[1]))
@@ -498,10 +492,10 @@ def parse_cfg(dot_file_path):
             false_target = node_id_mapping[false_id]
             if true_target == false_target:
                 continue
-            true_line = G.nodes[true_target]['label'].split(',')[0].strip('{}:')
-            true_line = ':'.join(true_line.split(':')[:2]) if '%' not in true_line and 'unamed' not in true_line else ''
-            false_line = G.nodes[false_target]['label'].split(',')[0].strip('{}:')
-            false_line = ':'.join(false_line.split(':')[:2]) if '%' not in false_line and 'unamed' not in false_line else ''
+            true_line = G.nodes[true_target]['label']
+            true_line = re.search(r"id:(\d+)", true_line).group(1)
+            false_line = G.nodes[false_target]['label']
+            false_line = re.search(r"id:(\d+)", false_line).group(1)
             cfg_data[int(node_id)] = {'T': true_line, 'F': false_line}
     return cfg_data
 
@@ -510,9 +504,9 @@ def parse_distances(file_path):
     with open(file_path, 'r') as file:
         for line in file:
             parts = line.strip().split(',')
-            if len(parts) == 2:
-                file_line, distance = parts
-                distance_data[file_line] = float(distance)
+            if len(parts) == 3:
+                bb_id, _, distance = parts
+                distance_data[bb_id] = float(distance)
     return distance_data
 
 def correlate_data(cfg_data, distance_data):
@@ -558,32 +552,36 @@ if __name__ == '__main__':
     remove_repeated_lines(direct_calls_path)
     if has_indirect_calls:
         remove_repeated_lines(indirect_calls_path)
-    
-    # merge CFGs
-    function_cfgs, function_loc, function_mangle_mappping = build_function_cfgs()
-    exit_locs = get_exit_locs()
-    direct_callsite = collections.defaultdict(list)
-    indirect_callsite = collections.defaultdict(list)
-    if has_indirect_calls:
-        with open(indirect_calls_path, 'r') as fd:
-            for l in fd.readlines():
-                s = l.strip().split(',')
-                indirect_callsite[s[0]].append(s[1])
-    with open(direct_calls_path, 'r') as f:
-        for l in f.readlines():
-            s = l.strip().split(",")
-            direct_callsite[s[0]].append(s[1])
-    G, cg = merge_cfgs(function_cfgs)
-    print(f"saving the merged indirect {G} ...")
-    nx.drawing.nx_pydot.write_dot(G, tmp_folder / "merged_cfg_indirect_calls.dot")
-    print(f"saving the indirect ret {cg}...")
-    nx.drawing.nx_pydot.write_dot(G, tmp_folder / "indirect_call_sites.dot")
-    indirect_callsite.clear()
-    G, cg = merge_cfgs(function_cfgs)
-    print(f"saving the merged direct {G} ...")
-    nx.drawing.nx_pydot.write_dot(G, tmp_folder / "merged_cfg_direct_calls.dot")
-    print(f"saving the direct ret {cg}...")
-    nx.drawing.nx_pydot.write_dot(cg, tmp_folder / "direct_call_sites.dot")
+
+    if not (os.path.isfile(tmp_folder / "merged_cfg_indirect_calls.dot")
+            and os.path.isfile(tmp_folder / "indirect_call_sites.dot")
+            and os.path.isfile(tmp_folder / "merged_cfg_direct_calls.dot")
+            and os.path.isfile(tmp_folder / "direct_call_sites.dot")):    
+        # merge CFGs
+        function_cfgs, function_loc, function_mangle_mappping = build_function_cfgs()
+        exit_locs = get_exit_locs()
+        direct_callsite = collections.defaultdict(list)
+        indirect_callsite = collections.defaultdict(list)
+        if has_indirect_calls:
+            with open(indirect_calls_path, 'r') as fd:
+                for l in fd.readlines():
+                    s = l.strip().split(',')
+                    indirect_callsite[s[0]].append(s[1])
+        with open(direct_calls_path, 'r') as f:
+            for l in f.readlines():
+                s = l.strip().split(",")
+                direct_callsite[s[0]].append(s[1])
+        G, cg = merge_cfgs(function_cfgs)
+        print(f"saving the merged indirect {G} ...")
+        nx.drawing.nx_pydot.write_dot(G, tmp_folder / "merged_cfg_indirect_calls.dot")
+        print(f"saving the indirect ret {cg}...")
+        nx.drawing.nx_pydot.write_dot(G, tmp_folder / "indirect_call_sites.dot")
+        indirect_callsite.clear()
+        G, cg = merge_cfgs(function_cfgs)
+        print(f"saving the merged direct {G} ...")
+        nx.drawing.nx_pydot.write_dot(G, tmp_folder / "merged_cfg_direct_calls.dot")
+        print(f"saving the direct ret {cg}...")
+        nx.drawing.nx_pydot.write_dot(cg, tmp_folder / "direct_call_sites.dot")
 
     # compute distances
     g = CFGraph(tmp_folder)
