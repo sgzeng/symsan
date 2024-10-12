@@ -1,9 +1,11 @@
+import collections
 import json
 import pickle
 import os
 import logging
 
 from model import RLModelType
+from plan import Plan
 
 LOGGING_LEVEL = logging.INFO
 MEMORY_LIMIT_SIZE = 15 * (1 << 30) # 15GB
@@ -69,6 +71,7 @@ class Config:
                  "decimal_precision",
                  'max_distance',
                  'initial_policy',
+                 'plan',
                  'static_result_folder',
                  'use_ordered_dict',
                  'use_builtin_solver',
@@ -180,8 +183,24 @@ class Config:
         return max_distance
 
     def _load_initial_policy(self):
-        policy_pkl = os.path.join(self.static_result_folder, "policy.pkl")
-        policy_txt = os.path.join(self.static_result_folder, "policy.txt")
+        policies = collections.OrderedDict()
+        self.plan = self._load_plan()
+        for t in self.plan:
+            if t not in policies:
+                policies[t] = self._load_policy(t)
+        return policies
+    
+    def _load_plan(self):
+        plan_fp = os.path.join(self.static_result_folder, "plan.pkl")
+        if not os.path.isfile(plan_fp):
+            return None
+        with open(plan_fp, 'rb') as file:
+            return pickle.load(file)
+    
+    def _load_policy(self, task):
+        assert type(task) == tuple and len(task) == 2
+        policy_pkl = os.path.join(self.static_result_folder, f"{task[0]}.{task[1]}.pkl")
+        policy_txt = os.path.join(self.static_result_folder, f"{task[0]}.{task[1]}.txt")
         policy = {}
         if os.path.isfile(policy_pkl):
             with open(policy_pkl, 'rb') as file:
