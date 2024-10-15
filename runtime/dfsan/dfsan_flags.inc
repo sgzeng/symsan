@@ -44,5 +44,5 @@ DFSAN_FLAG(const char *, output_dir, ".", "The path for output file.")
 DFSAN_FLAG(int, instance_id, 0, "instance id for multi-instance fuzzing.")
 DFSAN_FLAG(int, session_id, 0, "session/round id.")
 DFSAN_FLAG(bool, force_stdin, false, "force tainting stdin.")
-DFSAN_FLAG(const char *, distance_file, "", "The path of the distance file"
+DFSAN_FLAG(const char *, plan_file, "", "The path of the distance file"
                                             " for tracking reaching progress.")

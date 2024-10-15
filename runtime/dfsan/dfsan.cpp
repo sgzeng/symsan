@@ -28,6 +28,7 @@
 #include "sanitizer_common/sanitizer_posix.h"
 
 #include "dfsan.h"
+#include "plan.h"
 #include "taint_allocator.h"
 #include "union_util.h"
 #include "union_hashtable.h"
@@ -35,6 +36,8 @@
 #include <assert.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <fstream>
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,7 +93,7 @@ static __taint::union_hashtable __union_table(hashtable_buckets);
 
 Flags __dfsan::flags_data;
 bool print_debug;
-const char * distance_fp = NULL;
+Plan plan;
 
 // The size of TLS variables. These constants must be kept in sync with the ones
 // in Taint.cc
@@ -858,7 +861,7 @@ static void RegisterDfsanFlags(FlagParser *parser, Flags *f) {
 
 static void InitializeTaintFile() {
   struct stat st;
-  distance_fp = flags().distance_file;
+  const char * plan_fp = flags().plan_file;
   const char *filename = flags().taint_file;
   int err;
   if (internal_strcmp(filename, "stdin") == 0) {
@@ -905,6 +908,15 @@ static void InitializeTaintFile() {
       dfsan_check_label(label);
     }
   }
+
+  std::ifstream infile(plan_fp);
+  if(!infile.is_open()) {
+    throw std::runtime_error("Failed to open plan.txt");
+  }
+  std::string serialized_plan;
+  std::getline(infile, serialized_plan, '\0');
+  infile.close();
+  plan = Plan::deserialize(serialized_plan);
 }
 
 static void InitializeTaintSocket() {

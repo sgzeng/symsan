@@ -158,9 +158,9 @@ class ConcolicExecutor:
         subprocess_io = subprocess.PIPE if logging_level == 1 else subprocess.DEVNULL
         cmd, stdin, _ = utils.fix_at_file(self.cmd, self.input_file)
         taint_file = "stdin" if stdin else self.input_file
-        distance_fp = os.path.join(self.config.static_result_folder, "distance.cfg.txt")
+        plan_fp = os.path.join(self.config.static_result_folder, "plan.txt")
         options = (f"taint_file=\"{taint_file}\""
-        f":distance_file={distance_fp}"
+        f":plan_file={plan_fp}"
         f":shm_fd={self.shm._fd}"
         f":pipe_fd={self.pipefds[1]}"
         f":trace_bounds={shoud_trace_bounds}"
