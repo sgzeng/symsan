@@ -84,6 +84,9 @@ public:
     // Deserializes a string into a Plan object
     static Plan deserialize(const std::string& s);
 
+    // Static helper function to parse a tuple string into a std::pair<int, int>
+    static std::pair<int, int> parse_tuple(const std::string& s);
+    
     // Prints the unfolded steps to the standard output
     void print_unfolded() const;
 };

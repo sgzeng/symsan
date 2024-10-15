@@ -131,6 +131,56 @@ std::string Plan::serialize() const {
     }
 }
 
+std::pair<int, int> Plan::parse_tuple(const std::string& s) {
+    size_t pos = 0;
+
+    // Helper lambda to skip whitespace
+    auto skip_whitespace = [&](size_t& pos_ref) {
+        while (pos_ref < s.size() && isspace(s[pos_ref])) pos_ref++;
+    };
+
+    skip_whitespace(pos);
+
+    if (pos >= s.size() || s[pos] != '(')
+        throw std::invalid_argument("Expected '(' at the beginning of tuple");
+
+    pos++; // Skip '('
+    skip_whitespace(pos);
+
+    // Parse the first number
+    size_t start_num1 = pos;
+    while (pos < s.size() && (isdigit(s[pos]) || s[pos] == '+' || s[pos] == '-')) pos++;
+    if (start_num1 == pos)
+        throw std::invalid_argument("Expected first integer in tuple");
+
+    int num1 = std::stoi(s.substr(start_num1, pos - start_num1));
+
+    skip_whitespace(pos);
+
+    if (pos >= s.size() || s[pos] != ',')
+        throw std::invalid_argument("Expected ',' in tuple");
+
+    pos++; // Skip ','
+    skip_whitespace(pos);
+
+    // Parse the second number
+    size_t start_num2 = pos;
+    while (pos < s.size() && (isdigit(s[pos]) || s[pos] == '+' || s[pos] == '-')) pos++;
+    if (start_num2 == pos)
+        throw std::invalid_argument("Expected second integer in tuple");
+
+    int num2 = std::stoi(s.substr(start_num2, pos - start_num2));
+
+    skip_whitespace(pos);
+
+    if (pos >= s.size() || s[pos] != ')')
+        throw std::invalid_argument("Expected ')' at the end of tuple");
+
+    // pos++; // Skip ')', not needed here
+
+    return std::make_pair(num1, num2);
+}
+
 // Deserializes a string into a Plan object
 Plan Plan::deserialize(const std::string& s) {
     size_t pos = 0;
